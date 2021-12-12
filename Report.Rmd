@@ -1,0 +1,359 @@
+---
+title: "Heart Failure Prediction"
+author: "Mi Zhang"
+date: "11/27/2021"
+output: 
+  pdf_document
+---
+
+```{r setup, include=FALSE, warning= FALSE, echo=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, echo=FALSE, message=FALSE)
+pacman::p_load(
+  "ggplot2",
+  "knitr",
+  "arm",
+  "rstanarm",
+  "foreign",
+  "bayesplot",
+  "glmx",
+  "reshape2",
+  "VGAM",
+  "dplyr",
+  "magrittr",
+  "tidyverse",
+  "wakefield", "MatchIt", "tableone", "ggcorrplot", "gridExtra"
+)
+
+```
+
+## Abstract
+Heart failure prediction has been a prevalent public concern for a long period. In this report, I explored a heart disease-related database and aimed to find the best-fit regression model for heart failure prediction. A Generalized Linear Mixed-Effects Regression Model had been chosen as the best fit model for a binary outcome variable among other model-fitting methods and allowed for building complex mixed effects with random effects. This report found that male patients than female patients, with the higher indicator of type II diabetes, with symptoms of exercise-induced angina, with a flat ECG reading on exercised ST segment, and with asymptomatic chest pain type are at higher risk of heart disease. 
+
+## Introduction 
+
+According to the Centers for Disease Control and Prevention, heart disease is the leading cause of death in the United States and the population of heart disease patients continuously increased in recent years. Prediction of heart failure depends on many health-related factors and accurate prediction of heart failure is almost impossible. However, it would be beneficial if there is a statistical way of approaching the heart failure prediction and cautioning the patient's cardiac health as early as possible. The heart database used in this report is publicly available on Kaggle's website and the database is collected from five different countries. This report will focus on how different health factors are associated with heart disease and use a generalized linear mixed regression model for heart failure prediction. 
+
+```{r eval=FALSE}
+Variables<- c('Age', 'Sex', 'ChestPainType', 'RestingBP', 'Cholesterol', 'FastingBS', 'RestingECG', 'MaxHR', 'ExciseAngina', 'Oldpeak', 'ST_Slope', 'HeartDisease')
+Description <- c('age of the patient[years]','sex of the patient[M:Male, F:Female]', 'chest pain type[TA: Typical Angina, ATA: Atypical Angina, NAP: Non-Anginal Pain, ASY: Asymptomatic]', 'resting blood pressure[mm Hg]', 'serum cholesterol[mm/dl]', 'fasting blood sugar[1: if FastingBS > 120 mg/dl, 0: otherwise]', 'resting electrocardiogram results [Normal: Normal, ST: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV), LVH: showing probable or definite left ventricular hypertrophy by Estes criteria]', 'maximum heart rate achieved [Numeric value between 60 and 202]', 'exercise-induced angina [Y: Yes, N: No]', 'oldpeak = ST [Numeric value measured in depression]', 'the slope of the peak exercise ST segment [Up: upsloping, Flat: flat, Down: downsloping]', 'output class [1: heart disease, 0: Normal]')
+
+kable(cbind(Variables, Description),"pipe", caption = "Variables Descriptions For Heart Failure Data", longtable = TRUE)
+
+
+```
+
+## EDA 
+
+First of all, I want to understand what is the major factor of heart disease in the data. Therefore, I decided to make a correlation plot to find the relationship between the variables and the outcome. However, one trade-off here is that ggcorrplot can only plot numeric variables. To do that, I did some researches on those categorical variables which can lead to heart disease and convert them into ordered numeric variable. For example, in the variable "ChestPaintype" the severity for heart disease is ASY > NAP > ATA > ASY, for "RestingECG" is LVH > ST > Normal, and for exercised peak of "ST_Slope" is  Flat > Down > Up.
+
+Figure 1 is a correlation plot in which I found that the variable: "ChestPainType", "ExerciseAngina", "ST_Slope", and "Oldpeak" have a higher correlation  with heart disease. However, converting categorical variables into ordered numeric variables can create bias. Therefore, I decided to dig deeper into those binary and categorical variables.
+
+```{r fig.cap='Correlation Plot of Each Variables'}
+num_heart<- read.csv("heart.csv")
+library(ggcorrplot)
+#correlation p value 
+num_heart$Sex <- ifelse(num_heart$Sex=="M", 1,0)
+num_heart$ExerciseAngina <- ifelse(num_heart$ExerciseAngina=="Y", 1, 0)
+
+for (i in 1:length(num_heart$ChestPainType)){
+  if (str_detect(num_heart$ChestPainType[i],"TA")==TRUE){num_heart$ChestPainType[i]=1}
+  if (str_detect(num_heart$ChestPainType[i],"NAP")==TRUE){num_heart$ChestPainType[i]=2}
+  if (str_detect(num_heart$ChestPainType[i],"ATA")==TRUE){num_heart$ChestPainType[i]=3}
+  if (str_detect(num_heart$ChestPainType[i],"ASY")==TRUE){num_heart$ChestPainType[i]=4}
+  
+}
+
+for (i in 1:length(num_heart$RestingECG)){
+  if (str_detect(num_heart$RestingECG[i],"Normal")==TRUE){num_heart$RestingECG[i]=1}
+  if (str_detect(num_heart$RestingECG[i],"ST")==TRUE){num_heart$RestingECG[i]=2}
+  if (str_detect(num_heart$RestingECG[i],"LVH")==TRUE){num_heart$RestingECG[i]=3}
+  
+}
+
+for (i in 1: length(num_heart$ST_Slope)){
+  if (str_detect(num_heart$ST_Slope[i],"Up")==TRUE){num_heart$ST_Slope[i]=1}
+  if (str_detect(num_heart$ST_Slope[i],"Down")==TRUE){num_heart$ST_Slope[i]=2}
+  if (str_detect(num_heart$ST_Slope[i],"Flat")==TRUE){num_heart$ST_Slope[i]=3}
+  
+}
+num_heart$ChestPainType <- as.numeric(num_heart$ChestPainType)
+num_heart$RestingECG <- as.numeric(num_heart$RestingECG)
+num_heart$ST_Slope <- as.numeric(num_heart$ST_Slope)
+
+
+p.mat = cor_pmat(num_heart)
+#p.mat
+ggcorrplot(cor(num_heart), hc.order = TRUE,lab = TRUE,type = "lower", p.mat=p.mat)
+```
+
+Figure 2 displays several bar plots in which I majorly focus on binary and categorical variables. From the plots, I found that male patients, patients with ASY (asymptomatic) chest pain type, patients with blood sugar greater than 120 mg/dl, patients with exercise induced angina, and patients' exercise peak of ST slope is flat in ECG reading have a higher chance of having heart disease. For all other continuous variables, I plot them using box plots for EDA, but there is no significant founding. More EDA can be found in the Appendix. 
+
+
+```{r fig.cap="Barplots for Comparison of Different Variables to Heart Disease"}
+heart<- read.csv("heart.csv")
+heart$HeartDisease <- as.factor(heart$HeartDisease)
+p1 <- ggplot(data=heart)+
+  geom_bar(aes(x=Sex, fill= HeartDisease), stat="count") + ggtitle("Gender vs. Heart Disease")
+p2<- ggplot(data=heart)+
+  geom_bar(aes(x= ChestPainType,  fill= HeartDisease), stat= "count",show.legend = TRUE)+ggtitle("Chestpain Type vs. Heart Disease ")
+p3<- ggplot(data=heart)+
+  geom_bar(aes(x= as.factor(FastingBS), fill=HeartDisease), stat="count")+ ggtitle("Fasting Blood Sugar vs. Heart Disease")
+p4 <-ggplot(data=heart)+
+  geom_bar(aes(x= ExerciseAngina, fill=HeartDisease), stat="count") + ggtitle("Exercise Angina vs. HeartDisease")
+p5<- ggplot(data=heart)+
+  geom_bar(aes(x= ST_Slope, fill=HeartDisease), stat="count") + ggtitle("ECG ST_Slope vs. Heart Disease")
+p6 <- ggplot(data=heart)+
+  geom_bar(aes(x= RestingECG,fill=HeartDisease), stat="count")+ ggtitle("Resting ECG vs. Heart Disease")
+library(gridExtra)
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=2)
+
+```
+
+
+## Model Fitting and Reult
+
+Based on the EDAs, only a few variables are chosen for the model which includes: "Age", "Sex", "ChestPainType", "ExerciseAngina", "FastingBS", and "ST_Slope". Below I use the "stan_glmer" to estimate a mixed effect of a logistic regression model with variables mentioned above as predictors, add "FastingBS" and "ExerciseAngina" for the random slope and the random intercept is "ChestPainType". The function of the model is shown below: 
+
+stan_glmer(data=heart, HeartDisease ~ as.numeric(Age) + + FastingBS +Sex+ ExerciseAngina + ChestPainType + ST_Slope + (1+FastingBS|ChestPainType)+ (0+ExerciseAngina|ChestPainType),family = binomial(link="logit"), refresh=0)
+
+The Generalized linear mixed model is usually hard to interpret, but plots make it easier to understand. Figure 3 shows that male patients than female patients with FastingBS greater than 120 mg/dl (higher indicates type 2 diabetes) and have symptoms of exercise-induced angina have a higher probability of heart disease. A fixed effect table of the model can be found in the Appendix for more information.
+
+The estimates can be interpreted essentially as always. For example, a patient with Fasting blood sugar equal to 1 (greater than 120 mg/dl and therefore diabetic) is associated with 1.2418381 higher expected log odds of having heart disease. Similarly, a patient who has a symptom of exercise-induced angina is expected to have 1.0700240 higher log odds of having heart disease than people who don't have that symptom.
+
+
+```{r eval=FALSE}
+heart<- read.csv("heart.csv")
+heart$Sex<- as.factor(heart$Sex)
+heart$ChestPainType <- as.factor(heart$ChestPainType)
+heart$Age <- as.numeric(heart$Age)
+heart$FastingBS <- as.factor(heart$FastingBS)
+heart$RestingBP <- as.numeric(heart$RestingBP)
+heart$ExerciseAngina <-as.factor(heart$ExerciseAngina)
+heart$ST_Slope <- as.factor(heart$ST_Slope)
+heart$HeartDisease <- as.factor(heart$HeartDisease)
+heart$MaxHR <- as.numeric(heart$MaxHR)
+
+```
+
+```{r fig.align='center', fig.cap="Plot for Generalized Multilevel Model"}
+fit9 <- stan_glmer(data=heart, HeartDisease ~ as.numeric(Age) + + FastingBS +Sex+ ExerciseAngina + ChestPainType + ST_Slope + (1+FastingBS|ChestPainType)+ (0+ExerciseAngina|ChestPainType),family = binomial(link="logit"), refresh=0)
+
+#summary(fit9, digits=4)
+#coef(fit9)
+#ranef(fit9)
+plot(fit9)
+# se <- sqrt(diag(vcov(fit9)))
+
+```
+
+
+## Model Validation 
+
+The validation of the generalized linear mixed model is limited. We can only use the posterior predictive checks plot and binned residual plot for validation. Both posterior predictive checks plot and binned residual plot can be found in the Appendix. The posterior predictive checks plot displays the comparison distribution of the observed outcome of heart disease patient (y) and simulated outcome of heart disease (y_rep) in which both distributions match well and proves the model fits well.   
+
+The binned residual plot shows that a few points lie outside the confidence limits and there is no obvious pattern in the plot which also proves the effectiveness of the model. 
+
+## Discussion
+
+Based on the result of the Generalized Linear Mixed Regression model, it is no surprise that many predictors have matched the finding of the Exploratory Data Analysis. For example, male patients with diabetes and show symptoms of angina are at higher risk of heart failure. But there are some variables that I previously thought of as important factors for heart disease that fail to prove their importance in the modeling process, such as cholesterol and maximum heart rate. And from the data collecting view in which this database contains three variables collected using ECG screening, we can conclude that ECG  is effective for heart abnormality detection. In addition, analysis of medical-related data requires certain knowledge about the field. For example, I assume the elevation or depression on ECG reading of ST-segment as factors for higher risk of heart disease. But GLMER modeling result shows that the flat ST segment has a greater impact on heart disease. Therefore, I went back to do my research and found during exercise, elevated ST-segment is considered normal while flat ST-segment on ECG should bring into caution for heart disease.
+
+Through the entire model fitting process, I was surprised by how mixed effects logistc regression model can build complex mixed effect for the binary outcome, but also found binary outcome variable is limited for analysis in many ways. For example, stan_lmer() can only analyze numeric outcomes while binary outcome variables are factors in general. In addition, binary outcome variables can easily result in zero inflation when using the linear regression model. Matching is useful for the binary outcome variable, but this database contains symptoms rather than treatments which makes it hard to use the matching method. I think the other way to improve this analysis will be using machine learning, I would like to redo this analysis using machine learning in the future when I master the knowledge.
+
+## References
+
+- Noah Greifer, 2021, "MatchIt: Getting Started". https://cran.r-project.org/web/packages/MatchIt/vignettes/MatchIt.html
+
+- Centers for Disease Control and Prevention, "Heart Disease". https://www.cdc.gov/heartdisease/index.htm
+
+- UCLA Statistical Consulting, "MIXED EFFECTS LOGISTIC REGRESSION | R DATA ANALYSIS EXAMPLES". 
+https://stats.idre.ucla.edu/r/dae/mixed-effects-logistic-regression/
+
+- Anthony H. Kashou; Hajira Basit; Ahmad Malik, 2021, "ST Segment". https://www.ncbi.nlm.nih.gov/books/NBK459364/
+
+- Keith McNulty, "Handbook of Regression Modeling in People Analytics: With Examples in R, Python and Julia". https://peopleanalytics-regression-book.org/multinomial-logistic-regression-for-nominal-category-outcomes.html
+
+- onah Gabry and Ben Goodrich, "Estimating Generalized (Non-)Linear Models with Group-Specific Terms with rstanarm". https://mc-stan.org/rstanarm/articles/glmer.html
+
+\newpage
+
+## Appendix
+
+# data descripion 
+
+|Variables	       |Description                                                                      |
+|:-----------------|:--------------------------------------------------------------------------------|
+|Age	        |age of the patient[years]                                                             |
+|Sex	        |sex of the patient[M:Male, F:Female]                                                  |
+|ChestPainType|chest pain type[TA: Typical Angina, ATA: Atypical Angina, NAP: Non-Anginal Pain, ASY:                 Asymptomatic]                                                                         |
+|RestingBP	  |resting blood pressure[mm Hg]                                                         |
+|Cholesterol	|serum cholesterol[mm/dl]                                                              |
+|FastingBS	  |fasting blood sugar[1: if FastingBS > 120 mg/dl, 0: otherwise]                        |
+|RestingECG	  |resting electrocardiogram results [Normal: Normal, ST: having ST-T wave abnormality (T                wave inversions and/or ST elevation or depression of > 0.05 mV), LVH: showing probable                or definite left ventricular hypertrophy by Estes criteria]                           |
+|MaxHR	      |maximum heart rate achieved [Numeric value between 60 and 202]                        |
+|ExciseAngina	|exercise-induced angina [Y: Yes, N: No]                                               |
+|Oldpeak	    |oldpeak = ST [Numeric value measured in depression]                                   |
+|ST_Slope   	|the slope of the peak exercise ST segment [Up: upsloping, Flat: flat,                                 Down:downsloping]                                                                     |
+|HeartDisease	|output class [1: heart disease, 0: Normal]                                            |
+
+# Full EDA
+
+```{r fig.align='center', fig.cap="Box Plots for Continous Variables"}
+
+heart<- read.csv("heart.csv")
+heart$Oldpeak <- as.numeric(heart$Oldpeak)
+heart_box <- pivot_longer(heart, 
+                           cols = c(1, 4, 5, 8, 10),
+                           names_to = "varibles",
+                           values_to = "values"
+)
+ggplot(heart_box, aes(x=varibles, y=log(values), fill=factor(HeartDisease))) + 
+  geom_boxplot()+
+  theme(axis.text=element_text(size=6))
+
+```
+
+```{r}
+# heart<- read.csv("heart.csv")
+# GGally::ggpairs(heart)
+
+heart$HeartDisease <- as.factor(heart$HeartDisease)
+# does age have a effect on heart disease
+g1 <- ggplot(data=heart)+
+  geom_bar(aes(x= Age,  fill=HeartDisease), stat="count")
+# age seems to follow the normal distribution
+
+# ggplot(data=heart, aes(x = as.numeric(Age), y=HeartDisease, color=ChestPainType))+
+#   geom_smooth(method="lm", formula= y ~x, se = F)+
+#   geom_point(alpha = 0.5)
+
+# does sex have a effect on heart disease
+# p1 <- ggplot(data=heart)+
+#   geom_bar(aes(x=Sex, fill= as.factor(HeartDisease)), stat="count") + ggtitle("Gender vs. Heart Disease")
+
+
+# will chest pain types have impact on heart disease?
+# p2<- ggplot(data=heart)+
+#   geom_bar(aes(x= ChestPainType,  fill= as.factor(HeartDisease)), stat= "count",show.legend = TRUE)+ggtitle("Different Chestpain Type vs. Heart Disease ")
+
+# ggplot(data=heart,aes(x = ChestPainType, y= as.factor(HeartDisease)))+
+#   geom_jitter(aes(color=ChestPainType), alpha = 0.5)
+
+# will resting blood pressure have impact on heart disease?
+
+# ggplot(data=heart)+
+#   geom_bar(aes(x= RestingBP, y=as.factor(HeartDisease)), stat="identity")
+
+g4<- ggplot(data=heart,aes(x= as.numeric(RestingBP), y=HeartDisease))+
+         geom_violin(aes(color=HeartDisease))+
+         geom_jitter(aes(color=HeartDisease), alpha=0.3)
+
+# will cholesterol have impact on heart disease?
+# ggplot(data=heart,aes(x= as.numeric(Cholesterol), y=as.factor(HeartDisease)))+
+#   geom_point(aes(color=ChestPainType)) + 
+#   geom_smooth(aes(color=ChestPainType),method="lm", formula=y~x,
+#               alpha=0.2, size=2, se= FALSE)
+# ggplot(data=heart)+
+#   geom_boxplot(aes(x= as.numeric(Cholesterol), y=as.factor(HeartDisease), color=as.factor(HeartDisease)))
+# will fasting blood sugar have impact on heart disease?
+# p3<- ggplot(data=heart)+
+#   geom_bar(aes(x= as.factor(FastingBS), fill=as.factor(HeartDisease)), stat="count")
+# ggplot(data=heart)+
+#   geom_boxplot(aes(x = as.factor(FastingBS), y= as.factor(HeartDisease)))+
+#   geom_jitter(aes(x = as.factor(FastingBS), y= as.factor(HeartDisease), color=as.factor(HeartDisease)),alpha=0.3)
+# will resting ECG have impact on heart disease?
+# p6 <- ggplot(data=heart)+
+#   geom_bar(aes(x= RestingECG,fill=as.factor(HeartDisease)), stat="count")
+# will max heart rate have impact on heart disease?
+
+g3 <- ggplot(data=heart)+
+  geom_bar(aes(x= MaxHR, fill=HeartDisease), stat="count")
+# ggplot(data=heart)+
+#   geom_boxplot(aes(x= MaxHR, y=as.factor(HeartDisease), color=as.factor(HeartDisease)))+ 
+#   geom_jitter(aes(x= MaxHR, y=as.factor(HeartDisease), color=as.factor(HeartDisease)), alpha=0.3)
+# ggplot(data=heart)+
+#   geom_jitter(aes(x= MaxHR, y=HeartDisease, color=as.factor(HeartDisease)))
+g2 <- ggplot(data=heart, aes(x = MaxHR, y=HeartDisease))+
+  geom_point(aes(color=ChestPainType), alpha = 0.3) +
+  stat_smooth(method="lm", formula=y~x,
+              alpha=0.2, size=2, aes(color=ChestPainType), se=FALSE)
+
+# will exercise angina have impact on heart disease?
+# p4 <-ggplot(data=heart)+
+#   geom_bar(aes(x= ExerciseAngina, fill=as.factor(HeartDisease)), stat="count") + ggtitle("Exercise Angina vs. HeartDisease")
+
+# ggplot(data=heart,aes(x = as.factor(ExerciseAngina), y= as.factor(HeartDisease)))+
+#   stat_smooth(method="loess", formula=y~x,
+#               alpha=0.2, size=2, aes(fill=ExerciseAngina))+
+#   geom_jitter(aes(color=as.factor(ExerciseAngina)),alpha=0.4)
+
+
+# will old peak have impact on heart disease?
+g5 <- ggplot(data=heart)+
+  geom_bar(aes(x=Oldpeak, fill=HeartDisease), stat="count")
+
+# ggplot(data=heart, aes(x = Oldpeak, y=as.factor(HeartDisease)))+
+#   geom_boxplot()+
+#   geom_jitter(aes(color=as.factor(HeartDisease)), alpha = 0.3)
+
+# will ST slope have impact on heart disease?
+# p5<- ggplot(data=heart)+
+#   geom_bar(aes(x= ST_Slope, fill=as.factor(HeartDisease)), stat="count")
+# ggplot(data=heart,aes(x =ST_Slope , y= as.factor(HeartDisease)))+
+#   geom_jitter(aes(color=ST_Slope), alpha = 0.5)+
+#   stat_smooth(method="loess", formula=y~x,
+#               alpha=0.2, size=2, aes(fill=ST_Slope))
+
+grid.arrange(g1,g2, g3, g4, g5, ncol=2)
+
+```
+
+# lmer model
+```{r fig.align='center', fig.cap="Residual Plot for lmer"}
+
+fit8 <- lmer(data=heart, as.numeric(HeartDisease) ~ as.numeric(Age) + Sex + ST_Slope + ExerciseAngina + ChestPainType + (1+ExerciseAngina|ChestPainType) + (1+ST_Slope|ChestPainType))
+plot(fitted(fit8), resid(fit8, type="response"))
+
+
+```
+```{r fig.align='center', fig.cap="QQ Plot for lmer"}
+
+lattice::qqmath(fit8,main='QQ Plot')
+```
+
+# more plots for stan_glmer
+
+```{r fig.align="center", fig.cap="Posterior Predictive Checks Plot", fig.height=4}
+pp_check(fit9)
+```
+
+```{r fig.align="center", fig.cap="Binned Residual Plot for model"}
+
+binnedplot(fitted(fit9), resid(fit9, type = "response"))
+
+```
+
+```{r fig.align='center', fig.cap='Dot Plot for GLMER'}
+kable(fixef(fit9), "pipe")
+
+lattice::dotplot(ranef(fit9, which = "ChestPainType", condVar = TRUE), scales = list(y = list(alternating = 0)))
+
+```
+
+# Matching_it
+
+```{r fig.align='center'}
+heart$group <- as.logical(heart$ExerciseAngina == "Y")
+heart_match <- matchit(group ~ Age+ RestingBP + MaxHR + Cholesterol+ Oldpeak, data = heart, method="nearest", distanace="glm", link="probit")
+match_df<- summary(heart_match)
+kable(match_df$nn, digits = 2, align = 'c', 
+      caption = 'Table 2: Sample sizes')
+
+kable(match_df$sum.matched, digits = 2, align = 'c',caption = 'Table 3: Summary of balance for matched data')
+plot(heart_match, type = 'jitter', interactive = FALSE)
+
+plot(heart_match, type = "qq", interactive = FALSE, which.xs = c('Age', 'RestingBP', 'MaxHR', 'Cholesterol', "Oldpeak"))
+
+plot(summary(heart_match))
+
+
+```
