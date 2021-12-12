@@ -118,7 +118,7 @@ stan_glmer(data=heart, HeartDisease ~ as.numeric(Age) + + FastingBS +Sex+ Exerci
 
 The Generalized linear mixed model is usually hard to interpret, but plots make it easier to understand. Figure 3 shows that male patients than female patients with FastingBS greater than 120 mg/dl (higher indicates type 2 diabetes) and have symptoms of exercise-induced angina have a higher probability of heart disease. A fixed effect table of the model can be found in the Appendix for more information.
 
-The estimates can be interpreted essentially as always. For example, a patient with Fasting blood sugar equal to 1 (greater than 120 mg/dl and therefore diabetic) is associated with 1.2418381 higher expected log odds of having heart disease. Similarly, a patient who has a symptom of exercise-induced angina is expected to have 1.0700240 higher log odds of having heart disease than people who don't have that symptom.
+The estimates can be interpreted essentially as always. For example, a patient with Fasting blood sugar equal to 1 (greater than 120 mg/dl and therefore diabetic) is associated with 1.2411133 higher expected log odds of having heart disease. Similarly, a patient who has a symptom of exercise-induced angina is expected to have 1.0300053 higher log odds of having heart disease than people who don't have that symptom.
 
 
 ```{r eval=FALSE}
